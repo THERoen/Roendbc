@@ -127,10 +127,11 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
 
     if len(CC.orientationNED) == 3:
       self.pitch = CC.orientationNED[1]
-
+    hill_brake = math.sin(self.pitch) * ACCELERATION_DUE_TO_GRAVITY
+    
     if CC.longActive:
       accel = actuators.accel
-      gas, brake = compute_gas_brake(actuators.accel, CS.out.vEgo, self.CP.carFingerprint)
+      gas, brake = compute_gas_brake(actuators.accel + hill_brake, CS.out.vEgo, self.CP.carFingerprint)
     else:
       accel = 0.0
       gas, brake = 0.0, 0.0
@@ -169,7 +170,6 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
 
     # wind brake from air resistance decel at high speed
     wind_brake = np.interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
-    hill_brake = math.sin(self.pitch) * ACCELERATION_DUE_TO_GRAVITY
     # all of this is only relevant for HONDA NIDEC
     max_accel = np.interp(CS.out.vEgo, self.params.NIDEC_MAX_ACCEL_BP, self.params.NIDEC_MAX_ACCEL_V)
     # TODO this 1.44 is just to maintain previous behavior
