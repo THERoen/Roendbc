@@ -183,6 +183,7 @@ class PlatformConfigBase(Freezable):
 
   flags: int = 0
   sp_flags: int = 0
+  rp_flags: int = 0
 
   platform_str: str | None = None
 
@@ -251,3 +252,7 @@ class Platforms(str, ReprEnum, metaclass=PlatformsType):
   @classmethod
   def with_sp_flags(cls, sp_flags: IntFlag) -> set['Platforms']:
     return {p for p in cls if p.config.sp_flags & sp_flags}
+
+  @classmethod
+  def with_rp_flags(cls, rp_flags: IntFlag) -> set['Platforms']:
+    return {p for p in cls if p.config.rp_flags & rp_flags}
