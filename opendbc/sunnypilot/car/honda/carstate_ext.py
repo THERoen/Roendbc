@@ -7,6 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 from enum import StrEnum
 
 from opendbc.car import Bus, structs
+from opendbc.car.honda.values import HONDA_NIDEC_PEDAL_DEADZONE
 from opendbc.can.parser import CANParser
 from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 
@@ -30,4 +31,4 @@ class CarStateExt:
     if self.CP_SP.enableGasInterceptor:
       # Same threshold as panda, equivalent to 1e-5 with previous DBC scaling
       gas = (cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"] + cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) // 2
-      ret.gasPressed = gas > 492
+      ret.gasPressed = gas > 512 if self.CP.carFingerprint in HONDA_NIDEC_PEDAL_DEADZONE else gas > 492

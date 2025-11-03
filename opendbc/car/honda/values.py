@@ -352,6 +352,7 @@ class CAR(Platforms):
     CarSpecs(mass=1900, wheelbase=3.0, steerRatio=14.35, centerToFrontRatio=0.41, tireStiffnessFactor=0.82),
     radar_dbc_dict('honda_odyssey_exl_2018_generated'),
     flags=HondaFlags.NIDEC_ALT_PCM_ACCEL | HondaFlags.HAS_ALL_DOOR_STATES,
+    rp_flags=HondaFlagsRP.NIDEC_PEDAL_DEADZONE,
   )
   HONDA_ODYSSEY_TWN = HondaNidecPlatformConfig(
     [
@@ -376,12 +377,14 @@ class CAR(Platforms):
     CarSpecs(mass=4278 * CV.LB_TO_KG, wheelbase=2.86, centerToFrontRatio=0.428, steerRatio=16.0, tireStiffnessFactor=0.444),  # as spec
     radar_dbc_dict('acura_ilx_2016_can_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
+    rp_flags=HondaFlagsRP.NIDEC_PEDAL_DEADZONE,
   )
   HONDA_RIDGELINE = HondaNidecPlatformConfig(
     [HondaCarDocs("Honda Ridgeline 2017-25", min_steer_speed=12. * CV.MPH_TO_MS)],
     CarSpecs(mass=4515 * CV.LB_TO_KG, wheelbase=3.18, centerToFrontRatio=0.41, steerRatio=15.59, tireStiffnessFactor=0.444),  # as spec
     radar_dbc_dict('acura_ilx_2016_can_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
+    rp_flags=HondaFlagsRP.NIDEC_PEDAL_DEADZONE,
   )
   HONDA_CIVIC = HondaNidecPlatformConfig(
     [HondaCarDocs("Honda Civic 2016-18", min_steer_speed=12. * CV.MPH_TO_MS, video="https://youtu.be/-IkImTe1NYE")],
@@ -411,6 +414,7 @@ HONDA_BOSCH_TJA_CONTROL = CAR.with_flags(HondaFlags.BOSCH_TJA_CONTROL)
 
 
 HONDA_NIDEC_PEDAL_TUNE = CAR.with_rp_flags(HondaFlagsRP.NIDEC_PEDAL_TUNE)
+HONDA_NIDEC_PEDAL_DEADZONE = CAR.with_rp_flags(HondaFlagsRP.NIDEC_PEDAL_DEADZONE)
 
 
 DBC = CAR.create_dbc_map()
