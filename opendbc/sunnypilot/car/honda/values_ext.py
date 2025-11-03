@@ -9,10 +9,10 @@ from enum import IntFlag
 
 
 class HondaFlagsSP(IntFlag):
-  CLARITY = 1
-  EPS_MODIFIED = 2
+  CLARITY = 2**0
+  EPS_MODIFIED = 2**1
 
 
 class HondaSafetyFlagsSP:
-  CLARITY = 1
-  GAS_INTERCEPTOR = 2
+  CLARITY = 2**0
+  GAS_INTERCEPTOR = 2**1

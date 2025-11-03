@@ -53,33 +53,33 @@ class CarControllerParams:
 
 
 class HondaSafetyFlags(IntFlag):
-  ALT_BRAKE = 1
-  BOSCH_LONG = 2
-  NIDEC_ALT = 4
-  RADARLESS = 8
-  BOSCH_CANFD = 16
+  ALT_BRAKE = 2**0
+  BOSCH_LONG = 2**1
+  NIDEC_ALT = 2**2
+  RADARLESS = 2**3
+  BOSCH_CANFD = 2**4
 
 
 class HondaFlags(IntFlag):
   # Detected flags
   # Bosch models with alternate set of LKAS_HUD messages
-  BOSCH_EXT_HUD = 1
-  BOSCH_ALT_BRAKE = 2
+  BOSCH_EXT_HUD = 2**0
+  BOSCH_ALT_BRAKE = 2**1
 
   # Static flags
-  BOSCH = 4
-  BOSCH_RADARLESS = 8
+  BOSCH = 2**2
+  BOSCH_RADARLESS = 2**3
 
-  NIDEC = 16
-  NIDEC_ALT_PCM_ACCEL = 32
-  NIDEC_ALT_SCM_MESSAGES = 64
+  NIDEC = 2**4
+  NIDEC_ALT_PCM_ACCEL = 2**5
+  NIDEC_ALT_SCM_MESSAGES = 2**6
 
-  BOSCH_CANFD = 128
+  BOSCH_CANFD = 2**7
 
-  HAS_ALL_DOOR_STATES = 256  # Some Hondas have all door states, others only driver door
-  BOSCH_ALT_RADAR = 512
-  ALLOW_MANUAL_TRANS = 1024
-  HYBRID = 2048
+  HAS_ALL_DOOR_STATES = 2**8  # Some Hondas have all door states, others only driver door
+  BOSCH_ALT_RADAR = 2**9
+  ALLOW_MANUAL_TRANS = 2**10
+  HYBRID = 2**11
 
 
 # Car button codes
