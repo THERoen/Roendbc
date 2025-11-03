@@ -16,3 +16,7 @@ class HondaFlagsSP(IntFlag):
 class HondaSafetyFlagsSP:
   CLARITY = 2**0
   GAS_INTERCEPTOR = 2**1
+
+
+class HondaFlagsRP(IntFlag):
+  NIDEC_PEDAL_TUNE = 2**0
