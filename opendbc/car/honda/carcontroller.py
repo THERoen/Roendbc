@@ -1,5 +1,6 @@
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
                                      HONDA_NIDEC_ALT_PCM_ACCEL, CarControllerParams
@@ -170,7 +171,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, CC.latActive))
 
     # wind brake from air resistance decel at high speed
-    wind_brake = interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
+    wind_brake = interp(CS.out.vEgo, [0.0, 2.3, 40 * CV.MPH_TO_MS, 65 * CV.MPH_TO_MS], [0.001, 0.002, 0.003, 0.67056])
     # all of this is only relevant for HONDA NIDEC
     max_accel = interp(CS.out.vEgo, self.params.NIDEC_MAX_ACCEL_BP, self.params.NIDEC_MAX_ACCEL_V)
     # TODO this 1.44 is just to maintain previous behavior
