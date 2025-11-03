@@ -20,3 +20,4 @@ class HondaSafetyFlagsSP:
 
 class HondaFlagsRP(IntFlag):
   NIDEC_PEDAL_TUNE = 2**0
+  NIDEC_PEDAL_DEADZONE = 2**1
