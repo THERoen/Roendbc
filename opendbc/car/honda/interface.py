@@ -10,6 +10,8 @@ from opendbc.car.honda.carstate import CarState
 from opendbc.car.honda.radar_interface import RadarInterface
 from opendbc.car.interfaces import CarInterfaceBase
 
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
+
 from opendbc.roenpilot.common.numpy_fast import interp
 from opendbc.roenpilot.common.roenpilot_variables import PEDAL_ACCEL_MAX, ISO_MAX_BP, ISO_MAX_VALS_PEDAL_ACCEL_MAX
 
@@ -232,6 +234,8 @@ class CarInterface(CarInterfaceBase):
 
     ret.steerLimitTimer = 0.8
     ret.radarDelay = 0.1
+
+    ret.alternativeExperience |= ALTERNATIVE_EXPERIENCE.RAISE_LONGITUDINAL_LIMITS_TO_ISO_MAX
 
     return ret
 
