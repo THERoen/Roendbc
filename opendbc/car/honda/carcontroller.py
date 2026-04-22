@@ -7,42 +7,13 @@ from opendbc.car.interfaces import CarControllerBase
 
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
+from opendbc.sunnypilot.car.honda.carcontroller_ext import CarControllerExt
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
-
-_BrakeModifier = 0.0
-
-
-def compute_gb_honda_bosch(accel, speed):
-  # TODO returns 0s, is unused
-  return 0.0, 0.0
-
-
-def compute_gb_honda_nidec(accel, speed):
-  global _BrakeModifier
-  if accel < -3.9:
-    _BrakeModifier += 0.01
-  else:
-    _BrakeModifier = 0.0
-  creep_brake = 0.0
-  creep_speed = 2.3
-  creep_brake_value = 0.15
-  if speed < creep_speed:
-    creep_brake = (creep_speed - speed) / creep_speed * creep_brake_value
-  gb = float(accel) / interp(float(accel), [4.0, 3.5], [4.0, 4.8]) - creep_brake
-  just_brake = float(accel) / (-4.8 + _BrakeModifier) + creep_brake
-  return clip(gb, 0.0, 1.0), clip(just_brake, 0.0, 1.0)
-
-
-def compute_gas_brake(accel, speed, fingerprint):
-  if fingerprint in HONDA_BOSCH:
-    return compute_gb_honda_bosch(accel, speed)
-  else:
-    return compute_gb_honda_nidec(accel, speed)
 
 
 # TODO not clear this does anything useful
@@ -100,9 +71,10 @@ def process_hud_alert(hud_alert):
   return alert_fcw, alert_steer_required
 
 
-class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface):
+class CarController(CarControllerBase, CarControllerExt, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
+    CarControllerExt.__init__(self, CP, CP_SP)
     MadsCarController.__init__(self)
     GasInterceptorCarController.__init__(self, CP, CP_SP)
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
@@ -132,8 +104,8 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     pcm_cancel_cmd = CC.cruiseControl.cancel
 
     if CC.longActive:
-      accel = actuators.accel
-      gas, brake = compute_gas_brake(actuators.accel, CS.out.vEgo, self.CP.carFingerprint)
+      accel = CarControllerExt.accel(actuators.accel, CS.out.aEgo)
+      gas, brake = CarControllerExt.compute_gas_brake(actuators.accel, CS.out.vEgo)
     else:
       accel = 0.0
       gas, brake = 0.0, 0.0
