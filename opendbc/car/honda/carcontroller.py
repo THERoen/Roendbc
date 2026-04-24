@@ -1,7 +1,8 @@
-from math import sin
+from math import sin, sqrt
 
 from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.pid import PIDController
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
@@ -13,6 +14,7 @@ from opendbc.roenpilot.common.numpy_fast import clip, interp
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
+from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -113,6 +115,50 @@ def process_hud_alert(hud_alert):
   return alert_fcw, alert_steer_required
 
 
+def _clamp01(x: float) -> float:
+  return 0.0 if x <= 0.0 else (1.0 if x >= 1.0 else x)
+
+
+def _quick_start_curve(x: float) -> float:
+  x = _clamp01(x)
+  return x ** 0.5
+
+
+def _driver_override_speed_factor(v_ego: float) -> float:
+  full_cut_mph = 20.0
+  no_cut_mph = 25.0
+
+  return float(np.interp(v_ego,
+                         [full_cut_mph * CV.MPH_TO_MS, no_cut_mph * CV.MPH_TO_MS],
+                         [1.0, 0.5]))
+
+
+def _torque_lpf_tau(torque_cmd: float, prev_torque_cmd: float, v_ego: float) -> float:
+  if v_ego > 45.0 * CV.MPH_TO_MS: # Speed at which low-pass filter becomes static value listed below:
+    return 0.1
+
+  torque_delta = abs(float(torque_cmd) - float(prev_torque_cmd))
+  sign_change = (float(torque_cmd) * float(prev_torque_cmd)) < 0.0
+
+  if sign_change:
+    # Unwinding from turn: prioritize fast response to reduce lag
+    if torque_delta > 0.15:
+      return 0.000
+    elif torque_delta > 0.05:
+      return 0.050
+    else:
+      return 0.100
+
+  if torque_delta > 0.50:
+    return 0.020
+  elif torque_delta > 0.20:
+    return 0.050
+  elif torque_delta > 0.05:
+    return 0.075
+  else:
+    return 0.100
+
+
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
@@ -123,6 +169,15 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.params = CarControllerParams(CP)
     self.CAN = hondacan.CanBus(CP)
     self.tja_control = CP.carFingerprint in HONDA_BOSCH_TJA_CONTROL
+
+    # New longitudinal behavior is preserved for all Bosch cars and the Nidec Clarity.
+    # All other Nidec platforms fall back to the legacy longitudinal behavior.
+    self.use_new_long_logic = (CP.carFingerprint in HONDA_BOSCH) or (CP.carFingerprint == CAR.HONDA_CLARITY)
+
+    # Enable steering override behavior only when the modified EPS firmware is detected.
+    # Stock EPS cars rely on driver "assist" to achieve tighter curvature; forcing torque-to-zero
+    # and additional filtering on stock EPS can degrade lateral performance.
+    self.eps_modified = bool(getattr(CP_SP, "flags", 0) & HondaFlagsSP.EPS_MODIFIED.value)
 
     self.braking = False
     self.brake_steady = 0.
@@ -143,6 +198,18 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.windfactor_before_maxgas = 1.0
     self.windfactor_before_brake = 0.0
     self.pitch = 0.0
+
+    self.torque_lpf = 0.0
+    self.prev_torque_cmd = 0.0
+
+    self.override_ramp_down_s = 0.5
+    self.override_ramp_up_s = 2.0
+    self.steering_pressed_prev = False
+    self.override_state = "normal"
+    self.override_phase_start_nanos = 0
+    self.override_start_torque = 0.0
+
+    self.driver_override_until_nanos = 0
 
     # Bosch extra-brake controller
     self.brake_pid = PIDController(k_p=([0,], [0,]),
@@ -168,13 +235,109 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
       accel = actuators.accel
       if (self.CP.carFingerprint in (CAR.ACURA_MDX_3G, CAR.ACURA_MDX_3G_MMR)) and (accel > max(0, CS.out.aEgo) + 0.1):
         accel = 10000.0 # help with lagged accel until pedal tuning is inserted
-      gas, brake = compute_gas_brake(actuators.accel + hill_brake, CS.out.vEgo, self.CP.carFingerprint)
+
+      if self.CP.carFingerprint in HONDA_BOSCH:
+        gas, brake = compute_gb_honda_bosch(actuators.accel + hill_brake, CS.out.vEgo)
+      else:
+        if self.use_new_long_logic:
+          gas, brake = compute_gb_honda_nidec(actuators.accel + hill_brake, CS.out.vEgo)
+        else:
+          gas, brake = compute_gb_honda_nidec_brake_modifier(actuators.accel, CS.out.vEgo)
+      # gas, brake = compute_gas_brake(actuators.accel + hill_brake, CS.out.vEgo, self.CP.carFingerprint) # original compute_gas_brake function
     else:
       accel = 0.0
       gas, brake = 0.0, 0.0
 
-    # *** rate limit steer ***
-    limited_torque = rate_limit(actuators.torque, self.last_torque, -self.params.STEER_DELTA_DOWN * DT_CTRL,
+    # # *** rate limit steer ***
+    # *** steer command conditioning (driver interaction + low-pass filter + rate limit) ***
+    torque_cmd = actuators.torque
+
+    if CC.latActive:
+      steering_pressed = CS.out.steeringPressed
+
+      if self.eps_modified:
+        override_factor = _driver_override_speed_factor(CS.out.vEgo)
+
+        steering_rising = (not self.steering_pressed_prev) and steering_pressed
+        steering_falling = self.steering_pressed_prev and (not steering_pressed)
+
+        if steering_rising:
+          self.override_state = "ramp_down"
+          self.override_phase_start_nanos = now_nanos
+          self.override_start_torque = float(self.torque_lpf)
+
+        if steering_pressed:
+          if self.override_state == "ramp_down":
+            fade_ns = int(self.override_ramp_down_s * 1e9)
+            dt_ns = now_nanos - self.override_phase_start_nanos
+            x = 1.0 if fade_ns <= 0 else _clamp01(float(dt_ns) / float(fade_ns))
+
+            torque_target = self.override_start_torque * (1.0 - x * override_factor)
+
+            self.torque_lpf = torque_target
+            torque_cmd = self.torque_lpf
+
+            if x >= 1.0:
+              self.override_state = "holding"
+          else:
+            self.override_state = "holding"
+            torque_hold = float(torque_cmd) * (1.0 - override_factor)
+            self.torque_lpf = torque_hold
+            torque_cmd = torque_hold
+
+        else:
+          if steering_falling:
+            self.override_state = "ramp_up"
+            self.override_phase_start_nanos = now_nanos
+
+          if self.override_state == "ramp_up":
+            fade_ns = int(self.override_ramp_up_s * 1e9)
+            dt_ns = now_nanos - self.override_phase_start_nanos
+            x = 1.0 if fade_ns <= 0 else _clamp01(float(dt_ns) / float(fade_ns))
+
+            scale = _quick_start_curve(x)
+            ramp_scale = (1.0 - override_factor) + (override_factor * scale)
+            torque_target = float(torque_cmd) * ramp_scale
+
+            self.torque_lpf = torque_target
+            torque_cmd = self.torque_lpf
+
+            if x >= 1.0:
+              self.override_state = "normal"
+
+          if self.override_state == "normal":
+            tau = _torque_lpf_tau(torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
+            alpha = DT_CTRL / (tau + DT_CTRL)
+
+            if torque_cmd * self.torque_lpf < 0.0:
+              self.torque_lpf = torque_cmd
+            else:
+              self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
+
+            self.prev_torque_cmd = float(torque_cmd)
+            torque_cmd = self.torque_lpf
+
+        self.steering_pressed_prev = steering_pressed
+
+      else:
+        self.torque_lpf = float(torque_cmd)
+        self.prev_torque_cmd = float(torque_cmd)
+        self.steering_pressed_prev = steering_pressed
+        self.override_state = "normal"
+        self.override_phase_start_nanos = 0
+        self.override_start_torque = 0.0
+
+    else:
+      self.torque_lpf = 0.0
+      self.prev_torque_cmd = 0.0
+      self.last_torque = 0.0
+      self.driver_override_until_nanos = 0
+      self.steering_pressed_prev = False
+      self.override_state = "normal"
+      self.override_phase_start_nanos = 0
+      self.override_start_torque = 0.0
+
+    limited_torque = rate_limit(torque_cmd, self.last_torque, -self.params.STEER_DELTA_DOWN * DT_CTRL,
                                 self.params.STEER_DELTA_UP * DT_CTRL)
     self.last_torque = limited_torque
 
@@ -183,7 +346,10 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                                                                            CS.out.vEgo, self.CP.carFingerprint)
 
     # *** rate limit after the enable check ***
-    self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2., 3 * DT_CTRL)
+    if self.use_new_long_logic:
+      self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2., 3 * DT_CTRL)
+    else:
+      self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2., DT_CTRL)
 
     # vehicle hud display, wait for one update from 10Hz 0x304 msg
     alert_fcw, alert_steer_required = process_hud_alert(hud_control.visualAlert)
@@ -230,7 +396,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                      clip(CS.out.vEgo + 5.0, 0.0, 100.0)]
       pcm_speed = float(interp(gas - brake, pcm_speed_BP, pcm_speed_V))
       pcm_accel = int(1.0 * self.params.NIDEC_GAS_MAX)
-    elif (self.CP.carFingerprint in (CAR.ACURA_MDX_3G, CAR.ACURA_MDX_3G_MMR)):
+    elif self.CP.carFingerprint in (CAR.ACURA_MDX_3G, CAR.ACURA_MDX_3G_MMR):
       pcm_speed_V = [0.0,
                      clip(CS.out.vEgo - 2.0, 0.0, 100.0),
                      clip(CS.out.vEgo + 2.0, 0.0, 100.0),
@@ -269,19 +435,16 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
             self.brake_pid.reset()
             targetaccel = accel
 
-          self.accel = clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX)
+          self.accel = clip(targetaccel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX)
           gas_pedal_force = self.accel + wind_brake_ms2 * self.windfactor + hill_brake
 
           # live-learn gas pedal adjustments when openpilot is controlling gas
           if (actuators.longControlState == LongCtrlState.pid) and (not CS.out.gasPressed):
             gas_error = self.accel - CS.out.aEgo
-            if (self.CP.carFingerprint == CAR.ACURA_RDX_3G and CS.out.vEgo < 1e-3):
+            if self.CP.carFingerprint == CAR.ACURA_RDX_3G and CS.out.vEgo < 1e-3:
               self.gasfactor = 3.0 # max due to turbolag
             if gas_error != 0.0 and gas_pedal_force > 0.0:
-              if self.CP.carFingerprint in (CAR.HONDA_INSIGHT, CAR.ACURA_RDX_3G): # Insight gas pedal reacts too slowly
-                learn_speed = 150
-              else:
-                learn_speed = 50
+              learn_speed = 150 if self.CP.carFingerprint == CAR.HONDA_INSIGHT else 50 # Insight gas pedal reacts too slowly
               self.gasfactor = clip(self.gasfactor + gas_error / learn_speed * gas_pedal_force, 0.1, 3.0)
             if gas_error != 0.0 and (not CS.out.brakePressed) and (CS.out.vEgo > 0.0):
               wind_adjust = 1 + wind_brake_ms2 / 1000
@@ -303,8 +466,10 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           can_sends.extend(hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas,
                                                         self.stopping_counter, self.CP.carFingerprint, gas_pedal_force))
         else:
-          apply_brake = clip(self.brake_last - wind_brake, 0.0, 1.0)
-          # apply_brake = clip(self.brake_last - (wind_brake if self.brake_last <= 0.95 else 0.0), 0.0, 1.0) # mike8643 Increase Nidec Braking Force
+          if self.use_new_long_logic:
+            apply_brake = clip(self.brake_last - wind_brake, 0.0, 1.0)
+          else:
+            apply_brake = clip(self.brake_last - (wind_brake if self.brake_last <= 0.95 else 0.0), 0.0, 1.0) # mike8643 Increase Nidec Braking Force
           apply_brake = int(clip(apply_brake * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
           pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
 
@@ -315,19 +480,23 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           self.apply_brake_last = apply_brake
           self.brake = apply_brake / self.params.NIDEC_BRAKE_MAX
 
-          gas_error = actuators.accel - CS.out.aEgo
-          if (not CS.out.gasPressed) and (actuators.longControlState == LongCtrlState.pid) and self.CP_SP.enableGasInterceptor:
-            if gas_error != 0.0 and gas > 0.0:
-              self.gasfactor = clip(self.gasfactor + gas_error / 50 * (gas * 4.8), 0.1, 3.0)
-            if gas_error != 0.0 and (not CS.out.brakePressed) and (CS.out.vEgo > 0.0):
-              wind_adjust = 1 + (wind_brake * 4.8) / 1000
-              self.windfactor = clip(self.windfactor * (wind_adjust if (gas_error > 0) else 1.0/wind_adjust), 0.1, 5.0)
-            if gas <= 0.0: # don't reduce windfactor while braking, allow increases
-              self.windfactor = max(self.windfactor, self.windfactor_before_brake)
-            else:
-              self.windfactor_before_brake = self.windfactor
+          if self.CP_SP.enableGasInterceptor and self.use_new_long_logic:
+            gas_error = actuators.accel - CS.out.aEgo
+            if (not CS.out.gasPressed) and (actuators.longControlState == LongCtrlState.pid):
+              if gas_error != 0.0 and gas > 0.0:
+                self.gasfactor = clip(self.gasfactor + gas_error / 50 * (gas * 4.8), 0.1, 3.0)
+              if gas_error != 0.0 and (not CS.out.brakePressed) and (CS.out.vEgo > 0.0):
+                wind_adjust = 1 + (wind_brake * 4.8) / 1000
+                self.windfactor = clip(self.windfactor * (wind_adjust if (gas_error > 0) else 1.0/wind_adjust), 0.1, 5.0)
+              if gas <= 0.0: # don't reduce windfactor while braking, allow increases
+                self.windfactor = max(self.windfactor, self.windfactor_before_brake)
+              else:
+                self.windfactor_before_brake = self.windfactor
 
-          can_sends.extend(GasInterceptorCarController.update(self, CC, CS, gas * self.gasfactor, brake, wind_brake, self.packer, self.frame))
+            can_sends.extend(GasInterceptorCarController.update(self, CC, CS, gas * self.gasfactor, brake, wind_brake, self.packer, self.frame))
+          else:
+            can_sends.extend(GasInterceptorCarController.update(self, CC, CS, gas, brake, wind_brake, self.packer, self.frame))
+
 
     # Send dashboard UI commands.
     if self.frame % 10 == 0:
@@ -367,9 +536,15 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     new_actuators = actuators.as_builder()
     new_actuators.speed = self.speed
     new_actuators.accel = self.accel
-    new_actuators.gas = self.gasfactor
-    new_actuators.brake = self.windfactor
-    new_actuators.torque = self.last_torque
+
+    if self.use_new_long_logic:
+      new_actuators.gas = self.gasfactor
+      new_actuators.brake = self.windfactor
+    else:
+      new_actuators.gas = self.gas
+      new_actuators.brake = self.brake
+
+    new_actuators.torque = float(self.last_torque)
     new_actuators.torqueOutputCan = apply_torque
 
     self.frame += 1
