@@ -12,6 +12,7 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
+from opendbc.sunnypilot.car.honda.carcontroller_ext import CarControllerExt
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
