@@ -12,6 +12,7 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec, compute_gb_honda_nidec_brake_modifier
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
+from opendbc.sunnypilot.car.honda.carcontroller_ext import CarControllerExt
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
@@ -125,6 +126,7 @@ def _torque_lpf_tau(torque_cmd: float, prev_torque_cmd: float, v_ego: float) -> 
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
+    CarControllerExt.__init__(self)
     MadsCarController.__init__(self)
     GasInterceptorCarController.__init__(self, CP, CP_SP)
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
@@ -184,6 +186,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
 
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
+    CarControllerExt.update(self, CC)
     gas_pedal_force = 0.0
     actuators = CC.actuators
     hud_control = CC.hudControl
