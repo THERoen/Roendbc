@@ -9,6 +9,7 @@ from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSC
                                      HONDA_BOSCH_TJA_CONTROL, HONDA_NIDEC_ALT_PCM_ACCEL, CarControllerParams
 from opendbc.car.interfaces import CarControllerBase
 
+from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
@@ -20,11 +21,6 @@ VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 
 _BrakeModifier = 0.0 # mike8643 Increase Nidec Braking Force
-
-
-def compute_gb_honda_bosch(accel, speed):
-  # TODO returns 0s, is unused
-  return 0.0, 0.0
 
 
 def compute_gb_honda_nidec_brake_modifier(accel, speed): # mike8643 Increase Nidec Braking Force
