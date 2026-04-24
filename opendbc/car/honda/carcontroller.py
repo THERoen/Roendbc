@@ -1,9 +1,8 @@
-from math import sin, sqrt
+from math import sqrt
 
 from opendbc.can import CANPacker
-from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
+from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.common.pid import PIDController
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
                                      HONDA_BOSCH_TJA_CONTROL, HONDA_NIDEC_ALT_PCM_ACCEL, CarControllerParams
@@ -12,7 +11,7 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
-from opendbc.sunnypilot.car.honda.carcontroller_ext import CarControllerExt
+from opendbc.sunnypilot.car.honda.carcontroller_ext import compute_gb_honda_nidec_brake_modifier, CarControllerExt
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
@@ -20,24 +19,6 @@ from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
-
-_BrakeModifier = 0.0
-
-
-def compute_gb_honda_nidec_brake_modifier(accel, speed):
-  global _BrakeModifier
-  if accel < -3.9:
-    _BrakeModifier += 0.01
-  else:
-    _BrakeModifier = 0.0
-  creep_brake = 0.0
-  creep_speed = 2.3
-  creep_brake_value = 0.15
-  if speed < creep_speed:
-    creep_brake = (creep_speed - speed) / creep_speed * creep_brake_value
-  gb = float(accel) / interp(float(accel), [4.0, 3.5], [4.0, 4.8]) - creep_brake
-  just_brake = float(accel) / (-4.8 + _BrakeModifier) + creep_brake
-  return clip(gb, 0.0, 1.0), clip(just_brake, 0.0, 1.0)
 
 
 def compute_gas_brake(accel, speed, fingerprint):
@@ -179,13 +160,6 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.brake = 0.0
     self.last_torque = 0.0
 
-    self.gasfactor = 1.0
-    self.gasfactor_before_maxgas = 1.0
-    self.windfactor = 1.0
-    self.windfactor_before_maxgas = 1.0
-    self.windfactor_before_brake = 0.0
-    self.pitch = 0.0
-
     self.torque_lpf = 0.0
     self.prev_torque_cmd = 0.0
 
@@ -198,25 +172,13 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
 
     self.driver_override_until_nanos = 0
 
-    # Bosch extra-brake controller
-    self.brake_pid = PIDController(k_p=([0,], [0,]),
-                                   k_i=([0.], [0.5]),
-                                   pos_limit=0.0,
-                                   neg_limit=-2.0,
-                                   rate=50)
-    self.brake_pid.reset()
-
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
-    gas_pedal_force = 0.0
+    CarControllerExt.update(self, CC)
     actuators = CC.actuators
     hud_control = CC.hudControl
     hud_v_cruise = hud_control.setSpeed / CS.v_cruise_factor if hud_control.speedVisible else 255
     pcm_cancel_cmd = CC.cruiseControl.cancel
-
-    if len(CC.orientationNED) == 3:
-      self.pitch = CC.orientationNED[1]
-    hill_brake = sin(self.pitch) * ACCELERATION_DUE_TO_GRAVITY
 
     if CC.longActive:
       accel = actuators.accel
