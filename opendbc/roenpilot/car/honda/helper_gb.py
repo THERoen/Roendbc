@@ -7,7 +7,9 @@ See the LICENSE.md file in the root directory for more details.
 
 from opendbc.car.honda.values import HONDA_BOSCH
 
-from opendbc.roenpilot.common.numpy_fast import clip
+from opendbc.roenpilot.common.numpy_fast import clip, interp
+
+_BrakeModifier = 0.0 # mike8643 Increase Nidec Braking Force
 
 def compute_gb_honda_bosch(accel, speed):
   # TODO returns 0s, is unused
@@ -21,6 +23,21 @@ def compute_gb_honda_nidec(accel, speed):
     creep_brake = (creep_speed - speed) / creep_speed * creep_brake_value
   gb = float(accel) / 4.8 - creep_brake
   return clip(gb, 0.0, 1.0), clip(-gb, 0.0, 1.0)
+
+def compute_gb_honda_nidec_brake_modifier(accel, speed): # mike8643 Increase Nidec Braking Force
+  global _BrakeModifier
+  if accel < -3.9:
+    _BrakeModifier += 0.01
+  else:
+    _BrakeModifier = 0.0
+  creep_brake = 0.0
+  creep_speed = 2.3
+  creep_brake_value = 0.15
+  if speed < creep_speed:
+    creep_brake = (creep_speed - speed) / creep_speed * creep_brake_value
+  gb = float(accel) / interp(float(accel), [4.0, 3.5], [4.0, 4.8]) - creep_brake
+  just_brake = float(accel) / (-4.8 + _BrakeModifier) + creep_brake
+  return clip(gb, 0.0, 1.0), clip(just_brake, 0.0, 1.0)
 
 def compute_gas_brake(accel, speed, fingerprint):
   if fingerprint in HONDA_BOSCH:

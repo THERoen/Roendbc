@@ -9,7 +9,7 @@ from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSC
                                      HONDA_BOSCH_TJA_CONTROL, HONDA_NIDEC_ALT_PCM_ACCEL, CarControllerParams
 from opendbc.car.interfaces import CarControllerBase
 
-from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec
+from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec, compute_gb_honda_nidec_brake_modifier
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
@@ -19,24 +19,6 @@ from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
-
-_BrakeModifier = 0.0 # mike8643 Increase Nidec Braking Force
-
-
-def compute_gb_honda_nidec_brake_modifier(accel, speed): # mike8643 Increase Nidec Braking Force
-  global _BrakeModifier
-  if accel < -3.9:
-    _BrakeModifier += 0.01
-  else:
-    _BrakeModifier = 0.0
-  creep_brake = 0.0
-  creep_speed = 2.3
-  creep_brake_value = 0.15
-  if speed < creep_speed:
-    creep_brake = (creep_speed - speed) / creep_speed * creep_brake_value
-  gb = float(accel) / interp(float(accel), [4.0, 3.5], [4.0, 4.8]) - creep_brake
-  just_brake = float(accel) / (-4.8 + _BrakeModifier) + creep_brake
-  return clip(gb, 0.0, 1.0), clip(just_brake, 0.0, 1.0)
 
 
 def compute_gas_brake(accel, speed, fingerprint):
