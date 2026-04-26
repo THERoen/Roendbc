@@ -1,4 +1,4 @@
-from math import sin, sqrt
+from math import sin
 
 from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
@@ -10,6 +10,7 @@ from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSC
 from opendbc.car.interfaces import CarControllerBase
 
 from opendbc.roenpilot.car.honda.helper_gb import compute_gb_honda_bosch, compute_gb_honda_nidec, compute_gb_honda_nidec_brake_modifier
+from opendbc.roenpilot.car.honda.helper_torque import quick_start_curve, driver_override_speed_factor, torque_lpf_tau
 from opendbc.roenpilot.common.numpy_fast import clip, interp
 
 from opendbc.sunnypilot.car.honda.carcontroller_ext import CarControllerExt
@@ -82,45 +83,6 @@ def process_hud_alert(hud_alert):
     alert_steer_required = True
 
   return alert_fcw, alert_steer_required
-
-
-def _quick_start_curve(x: float) -> float:
-  return sqrt(clip(x, 0.0, 1.0))
-
-
-def _driver_override_speed_factor(v_ego: float) -> float:
-  full_cut_mph = 20.0
-  no_cut_mph = 25.0
-
-  return interp(v_ego,
-                [full_cut_mph * CV.MPH_TO_MS, no_cut_mph * CV.MPH_TO_MS],
-                [1.0, 0.5])
-
-
-def _torque_lpf_tau(torque_cmd: float, prev_torque_cmd: float, v_ego: float) -> float:
-  if v_ego > 45.0 * CV.MPH_TO_MS: # Speed at which low-pass filter becomes static value listed below:
-    return 0.1
-
-  torque_delta = abs(float(torque_cmd) - float(prev_torque_cmd))
-  sign_change = (float(torque_cmd) * float(prev_torque_cmd)) < 0.0
-
-  if sign_change:
-    # Unwinding from turn: prioritize fast response to reduce lag
-    if torque_delta > 0.15:
-      return 0.000
-    elif torque_delta > 0.05:
-      return 0.050
-    else:
-      return 0.100
-
-  if torque_delta > 0.50:
-    return 0.020
-  elif torque_delta > 0.20:
-    return 0.050
-  elif torque_delta > 0.05:
-    return 0.075
-  else:
-    return 0.100
 
 
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface):
@@ -222,7 +184,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
       steering_pressed = CS.out.steeringPressed
 
       if self.eps_modified:
-        override_factor = _driver_override_speed_factor(CS.out.vEgo)
+        override_factor = driver_override_speed_factor(CS.out.vEgo)
 
         steering_rising = (not self.steering_pressed_prev) and steering_pressed
         steering_falling = self.steering_pressed_prev and (not steering_pressed)
@@ -261,7 +223,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
             dt_ns = now_nanos - self.override_phase_start_nanos
             x = 1.0 if fade_ns <= 0 else clip(float(dt_ns) / float(fade_ns), 0.0, 1.0)
 
-            scale = _quick_start_curve(x)
+            scale = quick_start_curve(x)
             ramp_scale = (1.0 - override_factor) + (override_factor * scale)
             torque_target = float(torque_cmd) * ramp_scale
 
@@ -272,7 +234,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
               self.override_state = "normal"
 
           if self.override_state == "normal":
-            tau = _torque_lpf_tau(torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
+            tau = torque_lpf_tau(torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
             alpha = DT_CTRL / (tau + DT_CTRL)
 
             if torque_cmd * self.torque_lpf < 0.0:
