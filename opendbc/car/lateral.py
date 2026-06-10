@@ -1,8 +1,10 @@
 import math
 import numpy as np
 from dataclasses import dataclass
-from opendbc.car import structs, rate_limit, DT_CTRL, ACCELERATION_DUE_TO_GRAVITY
+from opendbc.car import structs, DT_CTRL, ACCELERATION_DUE_TO_GRAVITY
 from opendbc.car.vehicle_model import VehicleModel
+
+from opendbc.roenpilot.common.numpy_fast import rate_limit_numpy_fast
 
 FRICTION_THRESHOLD = 0.2
 
@@ -127,7 +129,7 @@ def apply_steer_angle_limits_vm(apply_angle: float, apply_angle_last: float, v_e
 
   # prevent fault/low speed comfort
   max_angle_delta = min(max_angle_delta, limits.ANGLE_LIMITS.MAX_ANGLE_RATE)
-  new_apply_angle = rate_limit(apply_angle, apply_angle_last, -max_angle_delta, max_angle_delta)
+  new_apply_angle = rate_limit_numpy_fast(apply_angle, apply_angle_last, -max_angle_delta, max_angle_delta)
 
   # *** max lateral accel limit ***
   max_angle = get_max_angle_vm(v_ego_raw, VM, limits)
